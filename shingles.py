@@ -1,49 +1,68 @@
-# -*- coding: UTF-8 -*-
-if __name__ == '__build__':
-  raise Exception
+# -*- coding: utf8 -*-
+import pymysql
+import re
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from multiprocessing import Pool
+import concurrent.futures
+from datetime import datetime
+import itertools
+import hashlib
 
-def canonize(source):
-  stop_symbols = '.,!?:;-\n\r()'
 
-  stop_words = (u'это', u'как', u'так',
-    u'и', u'в', u'над',
-    u'к', u'до', u'не',
-    u'на', u'но', u'за',
-    u'то', u'с', u'ли',
-    u'а', u'во', u'от',
-    u'со', u'для', u'о',
-    u'же', u'ну', u'вы',
-    u'бы', u'что', u'кто',
-    u'он', u'она')
 
-  return ( [x for x in [y.strip(stop_symbols) for y in source.lower().split()] if x and (x not in stop_words)] )
+DB_Connect = pymysql.connect('localhost', 'user', '25477452', 'news', charset='utf8mb4')
+cursor = DB_Connect.cursor()
 
-def genshingle(source):
-  import binascii
-  shingleLen = 10 #длина шингла
-  out = []
-  for i in range(len(source)-(shingleLen-1)):
-    out.append (binascii.crc32(' '.join( [x for x in source[i:i+shingleLen]] ).encode('utf-8')))
+#cursor.execute("select lower(text),id from facebook.comments order by rand() limit 5000")
+cursor.execute("select lower(title),url from news WHERE date_published  >= '2020-08-23 00:00:00' AND date_published <= '2020-09-02 00:59:59' limit 5000")
+ddata = cursor.fetchall()
 
-  return out
 
-def compaire (source1,source2):
-	same = 0
-	for i in range(len(source1)):
-		if source1[i] in source2:
-			same = same + 1
 
-	return float(same*2)/float(len(source1) + len(source2))*100
+def chunks(lst, count):
+    start = 0
+    for i in range(count):
+        stop = start + len(lst[i::count])
+        yield lst[start:stop]
+        start = stop
 
-def main():
-  
-	text1 = u""" :-) """
-	text2 = u""" :-( """
-  
-	cmp1 = genshingle(canonize(text1))
-	cmp2 = genshingle(canonize(text2))
 
-	print compaire(cmp1,cmp2)
+def Calcs(data):
+    count = 0
+    for couple in data:
+        try:
+            count += 1
+            if count % 100000 == 0:
+                print(count)
+            text_1 = re.sub(r'[^\w\s]', '', couple[0][0])
+            shingles = [text_1[i:i + 5] for i in range(len(text_1))][:-5]  # shingle size = 5
+            text_2 = re.sub(r'[^\w\s]', '', couple[1][0])
+            other_shingles = [text_2[i:i + 5] for i in range(len(text_2))][:-5]  # shingle size = 5
 
-# Start program
-main()
+
+            s = len(set(shingles) & set(other_shingles)) / len(set(shingles) | set(other_shingles))
+            if s > 0.65 and s != 1:
+                cursor.execute("INSERT INTO ml.temp_news (url, title, rating,dublicate) VALUES (%s, %s, %s, %s)",(couple[0][1],couple[0][0],s,couple[1][0]))
+                DB_Connect.commit()
+        except Exception as e:
+            pass
+
+
+
+if name == 'main':
+    Listfor = itertools.combinations(ddata, 2)
+    Data = chunks(list(Listfor), 11)
+
+
+    pool = Pool(processes=11)
+    start = datetime.now()
+    pool.map(Calcs, Data)
+
+    pool.close()
+    pool.join()
+    Calcs(ddata)
+
+    DB_Connect.close()
+
+    print(datetime.now() - start)
