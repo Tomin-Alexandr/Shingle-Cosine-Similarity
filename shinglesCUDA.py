@@ -12,7 +12,7 @@ STOP_WORDS = set(stopwords.words('russian'))
 STOP_SYMBOLS = '.,!?:;-\n\r()/=+*"' + "'"
 
 
-def delete_bad_string(text: str):
+def delete_bad_string(text):
     text = re.sub('[\f\t(\uf101)●➔·•]', '', text)  # delete wrong symbols
     text = re.sub('\n{2,}', '\n', text)  # repeat \n
     text = re.sub('( +)\n', '', text)  # empty string
@@ -32,28 +32,19 @@ def canonize_words(source):
             x and (x not in STOP_WORDS)]
 
 
-def clean_text(text: str):
-    #return canonize_words(delete_bad_string(text))
+def clean_text(text):
+    # return canonize_words(delete_bad_string(text))
     return delete_bad_string(text)
 
-def get_cosine_sim(*strs):
-    vectors = [t for t in get_vectors(*strs)]
-    return cosine_similarity(vectors)
-
-
-def get_vectors(*strs):
-    text = [t for t in strs]
-    vectorizer = CountVectorizer(text)
-    vectorizer.fit(text)
-    return vectorizer.transform(text).toarray()
 
 DB_Connect = pymysql.connect('localhost', 'user', '25477452', 'pikabu', charset='utf8mb4')
 cursor = DB_Connect.cursor()
 
 # cursor.execute("select lower(text),id from facebook.comments order by rand() limit 5000")
-cursor.execute("select lower(content),id from comments limit 55000")
-corpus = [item[0] for item in cursor.fetchall()]
-corpusId = [item[1] for item in cursor.fetchall()]
+cursor.execute("select lower(content),id from comments order by id limit 55000")
+Data = cursor.fetchall()
+corpus = [item[0] for item in Data]
+corpusId = [item[1] for item in Data]
 
 start = datetime.now()
 for i in range(len(corpus)):
@@ -61,28 +52,26 @@ for i in range(len(corpus)):
 
 count_vectorizer = CountVectorizer()
 
-# ----------
-
-# -----------
-
 sparse_matrix = count_vectorizer.fit_transform(corpus)
 doc_term_matrix = sparse_matrix.todense()
 
-df = pd.DataFrame(doc_term_matrix, columns=count_vectorizer.get_feature_names(),index=corpus)
-
+df = pd.DataFrame(doc_term_matrix, columns=count_vectorizer.get_feature_names(), index=corpus)
 
 prev = 0
 count = 0
-for i in range(500,len(df.index),500):
+for i in range(500, len(df.index), 500):
     temp_corpus = corpus[prev:i]
+    temp_id = corpusId[prev:i]
     cosMatrix = cosine_similarity(df[prev:i], df[prev:i])
     prev = i
-    x,y = np.where((cosMatrix>0.65) & (cosMatrix<0.99))
+    x, y = np.where((cosMatrix > 0.65) & (cosMatrix < 0.99))
 
+    for k, j in zip(x, y):
+        cursor.execute(
+            "INSERT INTO similarity (FirstId, FirstText, sim, SecondId, SecondText) VALUES (%s, %s, %s, %s, %s)",
+            (temp_id[k], temp_corpus[k], cosMatrix[k][j], temp_id[j], temp_corpus[j]))
 
-
-    for k,j in zip(x,y):
-        #print(temp_corpus[k],'-{}-'.format(cosMatrix[k][j]),temp_corpus[j])
-        count += 1
+    count += 1
+    if count % 100 == 0:
         print(count)
-print(datetime.now()-start)
+print(datetime.now() - start)
