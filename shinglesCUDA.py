@@ -4,10 +4,11 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import pymysql
 from datetime import datetime
+import itertools
 import numpy as np
-import pandas as pd
 
 
+# basic text cleaning
 def clean_text(text):
     text = re.sub('[\f\t(\uf101)●➔·•]', '', text)  # delete wrong symbols
     text = re.sub('\n{2,}', '\n', text)  # repeat \n
@@ -22,46 +23,54 @@ def clean_text(text):
     a = [item for item in a if not re.search('\d', item)]
     return ' '.join(a)
 
+
+# connecting stop words
 STOP_WORDS = set(stopwords.words('russian'))
-STOP_SYMBOLS = '.,!?:;-\n\r()/=+*"' + "'"
 
-ChunkSize = 2000
+"""
+ChunkSize sub matrix for dataset;
+Based on the RAM size
+"""
+ChunkSize = 10000
 
+# Create date point
+start = datetime.now()
+
+# MySQL connecting params
 DB_Connect = pymysql.connect('localhost', 'user', '25477452', 'pikabu', charset='utf8mb4')
 cursor = DB_Connect.cursor()
 
 cursor.execute("select lower(content),id from comments where tag != 'Коты&Девушки' and length(content)>100")
 w = cursor.fetchall()
+
+# Cleaning and prepare data
 corpus = [item[0] for item in w]
 corpusId = [item[1] for item in w]
-
-start = datetime.now()
 for i in range(len(corpus)):
     corpus[i] = clean_text(corpus[i])
 
 count_vectorizer = CountVectorizer()
 sparse_matrix = count_vectorizer.fit_transform(corpus)
 
-CorpusLen = sparse_matrix.shape[0]
-prev = 0
+csrMatrix = []
+idArray = []
+textArray = []
+for i in range(ChunkSize, sparse_matrix.shape[0] + ChunkSize, ChunkSize):
+    csrMatrix.append(sparse_matrix[i - ChunkSize:i - 1])
+    idArray.append(corpusId[i - ChunkSize:i - 1])
+    textArray.append(corpus[i - ChunkSize:i - 1])
 
-for chunk in range(ChunkSize, CorpusLen, ChunkSize):
-    csrMatrix = sparse_matrix.tocsr()[prev:chunk - 1]
-    temp_corpus = corpus[prev:chunk - 1]
-    temp_id = corpusId[prev:chunk - 1]
-    print(prev, chunk)
-    doc_term_matrix = csrMatrix.todense()
-    df = pd.DataFrame(doc_term_matrix, columns=count_vectorizer.get_feature_names(), index=corpus[prev:chunk - 1])
-    prev = chunk
+IterationList = itertools.product(range(len(csrMatrix)), repeat=2)
 
-    cosMatrix = cosine_similarity(df, df)
-
-    x, y = np.where((cosMatrix > 0.65) & (cosMatrix < 0.99))
+for i in IterationList:
+    print('Comparison {} matrix with {}'.format(i[0], i[1]))
+    similarities = cosine_similarity(csrMatrix[i[0]].astype(np.float32), csrMatrix[i[1]].astype(np.float32))
+    # triangle = np.triu(similarities)
+    x, y = np.where(similarities > 0.65)
     for k, j in zip(x, y):
         cursor.execute("INSERT INTO similarity (FirstId,FirstText,sim,SecondId,SecondText) VALUES (%s, %s, %s, %s, %s)",
-                       (temp_id[k], temp_corpus[k], cosMatrix[k][j].item(), temp_id[j],temp_corpus[j]))
+                       (idArray[i[0]][k], textArray[i[0]][k], similarities[k][j].item(), idArray[i[1]][j], textArray[i[1]][j]))
 
 DB_Connect.commit()
-
 DB_Connect.close()
 print(datetime.now() - start)
