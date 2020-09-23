@@ -129,3 +129,5 @@ dmypy.json
 .idea/vcs.xml
 .idea/Shingle.iml
 .idea/modules.xml
+.idea/sqldialects.xml
+.idea/dataSources.xml
